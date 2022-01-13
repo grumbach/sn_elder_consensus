@@ -19,6 +19,7 @@ pub mod blsttc;
 pub mod ed25519;
 
 pub use crate::handover::HandoverState;
+pub use crate::proposal::Proposal;
 pub use crate::vote::{Ballot, Generation, SignedVote, Vote, VoteMsg};
 
 #[cfg(feature = "bad_crypto")]

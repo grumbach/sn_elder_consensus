@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, PublicKey, Result, SecretKey};
+use crate::{Error, PublicKey, Result, SecretKey, Proposal};
 use core::fmt::Debug;
 use log::info;
 
@@ -26,7 +26,7 @@ where
 
 impl<'de, T> HandoverState<T>
 where
-    T: Clone + Copy + Debug + Ord + PartialEq + Serialize + Deserialize<'de>,
+    T: Clone + Copy + Debug + Ord + PartialEq + Serialize + Deserialize<'de> + Proposal,
 {
     pub fn from(
         secret_key: SecretKey,
@@ -345,11 +345,6 @@ where
         Ok(())
     }
 
-    pub fn validate_proposal(&self, _proposal: T) -> Result<()> {
-        // TODO generic/trait
-        Ok(())
-    }
-
     fn validate_vote(&self, vote: &Vote<T>) -> Result<()> {
         if vote.gen != self.gen {
             return Err(Error::VoteWithInvalidGeneration {
@@ -359,7 +354,7 @@ where
         }
 
         match &vote.ballot {
-            Ballot::Propose(proposal) => self.validate_proposal(*proposal),
+            Ballot::Propose(proposal) => proposal.validate(),
             Ballot::Merge(votes) => {
                 for child_vote in votes.iter() {
                     if child_vote.vote.gen != vote.gen {
