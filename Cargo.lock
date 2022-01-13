@@ -534,7 +534,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f054c6c1a6e95179d6f23ed974060dcefb2d9388bb7256900badad682c499de4"
 
 [[package]]
-name = "sn_elder_consensus"
+name = "sn_handover"
 version = "0.1.0"
 dependencies = [
  "bincode",

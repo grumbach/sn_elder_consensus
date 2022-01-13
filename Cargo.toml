@@ -1,6 +1,6 @@
 [package]
-name = "sn_elder_consensus"
-description = "BRB Membership: Enables nodes to dynamically join and leave a BRB voting group"
+name = "sn_handover"
+description = "elder handover is a consensus mechanism that enables elder to agree on a single value when handing over their propositions"
 license = "MIT OR BSD-3-Clause"
 version = "0.1.0"
 edition = "2021"
