@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, PublicKey, Result, SecretKey, Proposal};
+use crate::{Error, Proposal, PublicKey, Result, SecretKey};
 use core::fmt::Debug;
 use log::info;
 
@@ -68,6 +68,10 @@ where
 
     pub fn save_reached_consensus(&mut self, consensus: Option<T>) {
         self.consensus = consensus;
+    }
+
+    pub fn force_join(&mut self, public_key: PublicKey) {
+        self.voters.insert(public_key);
     }
 
     // Tell an actor our view of the current votes
