@@ -1,15 +1,16 @@
-use eyre::eyre;
 use rand::{
     prelude::{IteratorRandom, StdRng},
     Rng, SeedableRng,
 };
-use std::collections::BTreeSet;
 
 mod net;
 use net::{DummyProposal, Net, Packet};
 
+use std::collections::BTreeSet;
 use quickcheck::TestResult;
 use quickcheck_macros::quickcheck;
+use test_env_log::test;
+
 use sn_handover::{Ballot, Error, HandoverState, Proposal, PublicKey, SecretKey, SignedVote, Vote};
 
 #[test]
@@ -108,17 +109,19 @@ fn test_reject_votes_with_invalid_signatures() -> Result<(), Error> {
 fn test_split_vote() -> eyre::Result<()> {
     let mut rng = StdRng::from_seed([0u8; 32]);
     for nprocs in 1..7 {
-        let mut net = Net::with_procs(nprocs * 2, &mut rng);
+        println!("[TEST] testing with {} voters", nprocs);
+
+        // make network of nprocs voters
+        let mut net = Net::with_procs(nprocs, &mut rng);
         for i in 0..nprocs {
             let i_actor = net.procs[i].public_key();
-            for j in 0..(nprocs * 2) {
+            for j in 0..(nprocs) {
                 net.procs[j].force_join(i_actor);
             }
         }
 
-        let joining_members =
-            Vec::from_iter(net.procs[nprocs..].iter().map(HandoverState::public_key));
-        for (i, member) in joining_members.iter().enumerate() {
+        // make each voter propose a different thing
+        for i in 0..nprocs {
             let a_i = net.procs[i].public_key();
             let packets = net.procs[i]
                 .propose(DummyProposal(i as u64))?
@@ -127,36 +130,24 @@ fn test_split_vote() -> eyre::Result<()> {
                     source: a_i,
                     vote_msg,
                 });
+            println!("[TEST] voter {} voted {}", i, i);
             net.enqueue_packets(packets);
         }
-
         net.drain_queued_packets()?;
 
-        for i in 0..(nprocs * 2) {
-            for j in 0..(nprocs * 2) {
+        // make voters notice split and vote for merge votes
+        for i in 0..nprocs {
+            for j in 0..nprocs {
                 net.enqueue_anti_entropy(i, j);
             }
         }
         net.drain_queued_packets()?;
 
-        let proc0_gen = net.procs[0].gen;
-        let expected_members = net.procs[0].voters.clone();
-        assert!(expected_members.len() > nprocs);
-
+        // make sure they all reach the same conclusion
+        let first_voters_value = net.procs[0].consensus;
         for i in 0..nprocs {
-            let proc_i_gen = net.procs[i].gen;
-            assert_eq!(proc_i_gen, proc0_gen);
-            assert_eq!(net.procs[i].voters.clone(), expected_members);
-        }
-
-        for member in expected_members.iter() {
-            let p = net
-                .procs
-                .iter()
-                .find(|p| &p.public_key() == member)
-                .ok_or_else(|| eyre!("Could not find process with id {:?}", member))?;
-
-            assert_eq!(p.voters.clone(), expected_members);
+            println!("[TEST] checking voter {}'s consensus value: {:?}", i, net.procs[i].consensus);
+            assert_eq!(net.procs[i].consensus, first_voters_value);
         }
     }
 
@@ -167,17 +158,19 @@ fn test_split_vote() -> eyre::Result<()> {
 fn test_round_robin_split_vote() -> eyre::Result<()> {
     let mut rng = StdRng::from_seed([0u8; 32]);
     for nprocs in 1..7 {
-        let mut net = Net::with_procs(nprocs * 2, &mut rng);
+        println!("[TEST] testing with {} voters", nprocs);
+
+        // make network of nprocs voters
+        let mut net = Net::with_procs(nprocs, &mut rng);
         for i in 0..nprocs {
             let i_actor = net.procs[i].public_key();
-            for j in 0..(nprocs * 2) {
+            for j in 0..(nprocs) {
                 net.procs[j].force_join(i_actor);
             }
         }
 
-        let joining_members =
-            Vec::from_iter(net.procs[nprocs..].iter().map(HandoverState::public_key));
-        for (i, member) in joining_members.iter().enumerate() {
+        // make each voter propose a different thing
+        for i in 0..nprocs {
             let a_i = net.procs[i].public_key();
             let packets = net.procs[i]
                 .propose(DummyProposal(i as u64))?
@@ -186,40 +179,34 @@ fn test_round_robin_split_vote() -> eyre::Result<()> {
                     source: a_i,
                     vote_msg,
                 });
+            println!("[TEST] voter {} voted {}", i, i);
             net.enqueue_packets(packets);
         }
 
+        // send all the votes before letting others react
         while !net.packets.is_empty() {
             for i in 0..net.procs.len() {
                 net.deliver_packet_from_source(net.procs[i].public_key())?;
             }
         }
 
-        for i in 0..(nprocs * 2) {
-            for j in 0..(nprocs * 2) {
+        // make users notice split and vote for merge
+        for i in 0..nprocs {
+            for j in 0..nprocs {
                 net.enqueue_anti_entropy(i, j);
             }
         }
         net.drain_queued_packets()?;
 
+        // generate msc file
         net.generate_msc(&format!("round_robin_split_vote_{}.msc", nprocs))?;
 
-        let proc_0_gen = net.procs[0].gen;
-        let expected_members = net.procs[0].voters.clone();
-        assert!(expected_members.len() > nprocs);
-
+        // make sure they all reach the same conclusion
+        let max_proposed_value = nprocs-1;
+        let expected_consensus_value = Some(DummyProposal(max_proposed_value as u64));
         for i in 0..nprocs {
-            let gen = net.procs[i].gen;
-            assert_eq!(net.procs[i].voters.clone(), expected_members);
-        }
-
-        for member in expected_members.iter() {
-            let p = net
-                .procs
-                .iter()
-                .find(|p| &p.public_key() == member)
-                .ok_or_else(|| eyre!("Unable to find proc with id {:?}", member))?;
-            assert_eq!(p.voters.clone(), expected_members);
+            println!("[TEST] checking voter {}'s consensus value: {:?}", i, net.procs[i].consensus);
+            assert_eq!(net.procs[i].consensus, expected_consensus_value);
         }
     }
     Ok(())
@@ -249,164 +236,171 @@ fn test_simple_proposal() {
     net.drain_queued_packets().unwrap();
 
     net.generate_msc("simple_join.msc").unwrap();
+
+    // make sure they all reach the same conclusion
+    let first_voters_value = net.procs[0].consensus;
+    for i in 0..4 {
+        println!("[TEST] checking voter {}'s consensus value: {:?}", i, net.procs[i].consensus);
+        assert_eq!(net.procs[i].consensus, first_voters_value);
+    }
 }
 
-#[quickcheck]
-fn prop_validate_reconfig(
-    join_or_leave: bool,
-    actor_idx: u8,
-    members: u8,
-    seed: u128,
-) -> Result<TestResult, Error> {
-    let mut seed_buf = [0u8; 32];
-    seed_buf[0..16].copy_from_slice(&seed.to_le_bytes());
-    let mut rng = StdRng::from_seed(seed_buf);
-
-    if members >= 7 {
-        return Ok(TestResult::discard());
-    }
-
-    let mut proc = HandoverState::<DummyProposal>::random(&mut rng, Default::default());
-
-    let trusted_actors: Vec<_> = (0..members)
-        .map(|_| PublicKey::random(&mut rng))
-        .chain(vec![proc.public_key()])
-        .collect();
-
-    for a in trusted_actors.iter().copied() {
-        proc.force_join(a);
-    }
-
-    let all_actors = {
-        let mut actors = trusted_actors;
-        actors.push(PublicKey::random(&mut rng));
-        actors
-    };
-
-    let actor = all_actors[actor_idx as usize % all_actors.len()];
-    let proposal = match join_or_leave {
-        true => DummyProposal(1),
-        false => DummyProposal(0),
-    };
-
-    assert!(proposal.validate().is_ok());
-    Ok(TestResult::passed())
-}
-
-#[quickcheck]
-fn prop_bft_consensus(
-    recursion_limit: u8,
-    n: u8,
-    faulty: Vec<u8>,
-    seed: u128,
-) -> Result<TestResult, Error> {
-    let n = n % 6 + 1;
-    let recursion_limit = recursion_limit % (n / 2).max(1);
-    let faulty = BTreeSet::from_iter(
-        faulty
-            .into_iter()
-            .map(|p| p % n)
-            .filter(|p| p != &0) // genesis can not be faulty
-            .take((n / 3) as usize),
-    );
-    // All non-faulty nodes eventually decide on a proposal
-
-    let mut seed_buf = [0u8; 32];
-    seed_buf[0..16].copy_from_slice(&seed.to_le_bytes());
-    let mut rng = rand::rngs::StdRng::from_seed(seed_buf);
-
-    let mut net = Net::with_procs(n as usize, &mut rng);
-
-    // Set first proc as genesis
-    let genesis = net.procs[0].public_key();
-    for p in net.procs.iter_mut() {
-        p.force_join(genesis);
-    }
-
-    let faulty = BTreeSet::from_iter(
-        faulty
-            .into_iter()
-            .map(|idx| net.procs[idx as usize].public_key()),
-    );
-    let n_actions = rng.gen::<u8>() % 3;
-
-    for _ in 0..n_actions {
-        match rng.gen::<u8>() % 3 {
-            0 if !faulty.is_empty() => {
-                match rng.gen::<bool>() {
-                    true => {
-                        // send a randomized packet
-                        let packet = net.gen_faulty_packet(recursion_limit, &faulty, &mut rng);
-                        net.enqueue_packets(vec![packet]);
-                    }
-                    false => {
-                        // drop a random packet
-                        let source = net.gen_public_key(&mut rng);
-                        net.drop_packet_from_source(source);
-                    }
-                };
-            }
-            1 => {
-                // node takes honest action
-                let pks = BTreeSet::from_iter(net.procs.iter().map(HandoverState::public_key));
-
-                let proc = if let Some(proc) = net
-                    .procs
-                    .iter_mut()
-                    .filter(|p| !faulty.contains(&p.public_key())) // filter out faulty nodes
-                    .filter(|p| p.voters.contains(&p.public_key())) // filter out non-members
-                    .choose(&mut rng)
-                {
-                    proc
-                } else {
-                    // No honest node can take an action
-                    continue;
-                };
-
-                let source = proc.public_key();
-
-                let proposal = match rng.gen::<bool>() {
-                    true => DummyProposal(1),
-                    false => DummyProposal(0),
-                };
-
-                let packets = Vec::from_iter(
-                    proc.propose(proposal)
-                        .unwrap()
-                        .into_iter()
-                        .map(|vote_msg| Packet { source, vote_msg }),
-                );
-                net.enqueue_packets(packets);
-            }
-            _ => {
-                // Network delivers a packet
-                let source = net.gen_public_key(&mut rng);
-                let _ = net.deliver_packet_from_source(source);
-            }
-        };
-    }
-
-    let _ = net.drain_queued_packets();
-
-    let honest_procs = Vec::from_iter(
-        net.procs
-            .iter()
-            .filter(|p| !faulty.contains(&p.public_key())),
-    );
-
-    // BFT TERMINATION PROPERTY: all honest procs have decided ==>
-    for p in honest_procs.iter() {
-        assert_eq!(p.votes, Default::default());
-    }
-
-    // BFT AGREEMENT PROPERTY: all honest procs have decided on the same values
-    let reference_proc = &honest_procs[0];
-    for p in honest_procs.iter() {
-        assert_eq!(reference_proc.gen, p.gen);
-        for g in 0..=reference_proc.gen {
-            assert_eq!(reference_proc.voters.clone(), p.voters.clone())
-        }
-    }
-
-    Ok(TestResult::passed())
-}
+// #[quickcheck]
+// fn prop_validate_proposal(
+//     join_or_leave: bool,
+//     actor_idx: u8,
+//     members: u8,
+//     seed: u128,
+// ) -> Result<TestResult, Error> {
+//     let mut seed_buf = [0u8; 32];
+//     seed_buf[0..16].copy_from_slice(&seed.to_le_bytes());
+//     let mut rng = StdRng::from_seed(seed_buf);
+//
+//     if members >= 7 {
+//         return Ok(TestResult::discard());
+//     }
+//
+//     let mut proc = HandoverState::<DummyProposal>::random(&mut rng, Default::default());
+//
+//     let trusted_actors: Vec<_> = (0..members)
+//         .map(|_| PublicKey::random(&mut rng))
+//         .chain(vec![proc.public_key()])
+//         .collect();
+//
+//     for a in trusted_actors.iter().copied() {
+//         proc.force_join(a);
+//     }
+//
+//     let all_actors = {
+//         let mut actors = trusted_actors;
+//         actors.push(PublicKey::random(&mut rng));
+//         actors
+//     };
+//
+//     let actor = all_actors[actor_idx as usize % all_actors.len()];
+//     let proposal = match join_or_leave {
+//         true => DummyProposal(1),
+//         false => DummyProposal(0),
+//     };
+//
+//     assert!(proposal.validate().is_ok());
+//     Ok(TestResult::passed())
+// }
+//
+// #[quickcheck]
+// fn prop_bft_consensus(
+//     recursion_limit: u8,
+//     n: u8,
+//     faulty: Vec<u8>,
+//     seed: u128,
+// ) -> Result<TestResult, Error> {
+//     let n = n % 6 + 1;
+//     let recursion_limit = recursion_limit % (n / 2).max(1);
+//     let faulty = BTreeSet::from_iter(
+//         faulty
+//             .into_iter()
+//             .map(|p| p % n)
+//             .filter(|p| p != &0) // genesis can not be faulty
+//             .take((n / 3) as usize),
+//     );
+//     // All non-faulty nodes eventually decide on a proposal
+//
+//     let mut seed_buf = [0u8; 32];
+//     seed_buf[0..16].copy_from_slice(&seed.to_le_bytes());
+//     let mut rng = rand::rngs::StdRng::from_seed(seed_buf);
+//
+//     let mut net = Net::with_procs(n as usize, &mut rng);
+//
+//     // Set first proc as genesis
+//     let genesis = net.procs[0].public_key();
+//     for p in net.procs.iter_mut() {
+//         p.force_join(genesis);
+//     }
+//
+//     let faulty = BTreeSet::from_iter(
+//         faulty
+//             .into_iter()
+//             .map(|idx| net.procs[idx as usize].public_key()),
+//     );
+//     let n_actions = rng.gen::<u8>() % 3;
+//
+//     for _ in 0..n_actions {
+//         match rng.gen::<u8>() % 3 {
+//             0 if !faulty.is_empty() => {
+//                 match rng.gen::<bool>() {
+//                     true => {
+//                         // send a randomized packet
+//                         let packet = net.gen_faulty_packet(recursion_limit, &faulty, &mut rng);
+//                         net.enqueue_packets(vec![packet]);
+//                     }
+//                     false => {
+//                         // drop a random packet
+//                         let source = net.gen_public_key(&mut rng);
+//                         net.drop_packet_from_source(source);
+//                     }
+//                 };
+//             }
+//             1 => {
+//                 // node takes honest action
+//                 let pks = BTreeSet::from_iter(net.procs.iter().map(HandoverState::public_key));
+//
+//                 let proc = if let Some(proc) = net
+//                     .procs
+//                     .iter_mut()
+//                     .filter(|p| !faulty.contains(&p.public_key())) // filter out faulty nodes
+//                     .filter(|p| p.voters.contains(&p.public_key())) // filter out non-members
+//                     .choose(&mut rng)
+//                 {
+//                     proc
+//                 } else {
+//                     // No honest node can take an action
+//                     continue;
+//                 };
+//
+//                 let source = proc.public_key();
+//
+//                 let proposal = match rng.gen::<bool>() {
+//                     true => DummyProposal(1),
+//                     false => DummyProposal(0),
+//                 };
+//
+//                 let packets = Vec::from_iter(
+//                     proc.propose(proposal)
+//                         .unwrap()
+//                         .into_iter()
+//                         .map(|vote_msg| Packet { source, vote_msg }),
+//                 );
+//                 net.enqueue_packets(packets);
+//             }
+//             _ => {
+//                 // Network delivers a packet
+//                 let source = net.gen_public_key(&mut rng);
+//                 let _ = net.deliver_packet_from_source(source);
+//             }
+//         };
+//     }
+//
+//     let _ = net.drain_queued_packets();
+//
+//     let honest_procs = Vec::from_iter(
+//         net.procs
+//             .iter()
+//             .filter(|p| !faulty.contains(&p.public_key())),
+//     );
+//
+//     // BFT TERMINATION PROPERTY: all honest procs have decided ==>
+//     for p in honest_procs.iter() {
+//         assert_eq!(p.votes, Default::default());
+//     }
+//
+//     // BFT AGREEMENT PROPERTY: all honest procs have decided on the same values
+//     let reference_proc = &honest_procs[0];
+//     for p in honest_procs.iter() {
+//         assert_eq!(reference_proc.gen, p.gen);
+//         for g in 0..=reference_proc.gen {
+//             assert_eq!(reference_proc.voters.clone(), p.voters.clone())
+//         }
+//     }
+//
+//     Ok(TestResult::passed())
+// }

@@ -90,9 +90,9 @@ where
     }
 
     pub fn handle_signed_vote(&mut self, signed_vote: SignedVote<T>) -> Result<Vec<VoteMsg<T>>> {
-        // if consensus was reached, ignore the vote and send them the consensus proof (all the votes)
+        // if consensus was reached, ignore the vote
         if self.consensus.is_some() {
-            return Ok(self.anti_entropy(signed_vote.voter));
+            return Ok(vec![]);
         }
 
         // validate and store

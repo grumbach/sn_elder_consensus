@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::Write;
 use std::iter;
 
+use log::info;
 use rand::prelude::{IteratorRandom, StdRng};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -150,7 +151,7 @@ impl Net {
         self.purge_empty_queues();
 
         let dest = packet.vote_msg.dest;
-        println!("delivering {:?}->{:?} {:?}", packet.source, dest, packet);
+        info!("delivering {:?}->{:?} {:?}", packet.source, dest, packet);
 
         self.delivered_packets.push(packet.clone());
 
@@ -159,7 +160,7 @@ impl Net {
         let dest_proc = match dest_proc_opt {
             Some(proc) => proc,
             None => {
-                println!("[NET] destination proc does not exist, dropping packet");
+                info!("[NET] destination proc does not exist, dropping packet");
                 return Ok(());
             }
         };
@@ -168,7 +169,7 @@ impl Net {
         let vote = packet.vote_msg.vote;
 
         let resp = dest_proc.handle_signed_vote(vote);
-        println!("[NET] resp: {:?}", resp);
+        info!("[NET] resp: {:?}", resp);
         match resp {
             Ok(vote_msgs) => {
                 let dest_actor = dest_proc.public_key();
